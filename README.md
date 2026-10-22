@@ -3,9 +3,11 @@
 A phone-friendly web app (PWA) for keeping track of a cross stitch project.
 
 1. **Import** a photo or screenshot of a chart. The app finds the grid, reads the colour of every square and rebuilds the pattern. You get two quick steps: line up the grid, then check the colours (with a one-tap **Pattern / Original** toggle to compare against your image).
-2. **Stitch**: pinch to zoom, tap (or swipe) squares to mark them done. Finished squares fill in with full colour and a tick; unfinished ones stay pale with a symbol.
-3. **Highlight a colour**: tap a swatch in the tray to make every *unfinished* square of that colour stand out (with a count of how many are left).
-4. **Original toggle** at the top of the stitching screen flips to your original chart at exactly the same zoom and position, with your progress shown on top.
+   If the chart has a legend, the app finds its colour swatches and matches every square to them, so the number of colours starts out right. The count is a number field you can nudge up and down; changing it switches to automatic grouping.
+2. **Fix squares**: a side-by-side (or stacked) editor shows the rebuilt pattern and your original chart with one shared zoom and position. Paint, pick a colour from a square, flood-fill, merge or recolour palette colours. Open it from the import review or from the stitching screen (*Fix squares*).
+3. **Stitch**: pinch to zoom, tap (or swipe) squares to mark them done. Finished squares fill in with full colour and a tick; unfinished ones stay pale with a symbol.
+4. **Highlight a colour**: tap a swatch in the tray to make every *unfinished* square of that colour stand out (with a count of how many are left).
+5. **Original toggle** at the top of the stitching screen flips to your original chart at exactly the same zoom and position, with your progress shown on top.
 
 The screen stays awake while you stitch (Screen Wake Lock API). Progress is saved on the phone (IndexedDB); the app works offline once loaded. Use *Pattern options → Save a backup file* to export a pattern with its progress.
 
@@ -29,6 +31,7 @@ Merge to `main`, then in the repo go to **Settings → Pages → Source: GitHub 
 - `src/core/detect.ts` finds the grid spacing and offset from the faint repeating lines (Fourier scan of the line profile).
 - `src/core/sample.ts` takes the dominant colour of each square, ignoring dark symbols and backstitch lines; a dark mark in the middle of a white square is treated as a white stitch.
 - `src/core/quantize.ts` clusters colours (agglomerative, in Lab space) so the "number of colours" slider is instant.
+- `src/core/legend.ts` finds the legend: same-sized swatches lined up in a column or row, reading each swatch's colour.
 - `src/core/model.ts` ties it together and offers clean-up for legends/labels that sit next to the chart.
 
 Backstitch lines are not imported yet; keep an eye on them via the Original toggle.

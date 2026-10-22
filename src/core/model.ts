@@ -1,5 +1,6 @@
 import { labDist, rgbToLab } from './color';
 import { detectLattice } from './detect';
+import { findLegend } from './legend';
 import { ColorTree, distinctColors } from './quantize';
 import type { Raster, RGB } from './raster';
 import { sampleGrid, type CellSample, type GridSpec } from './sample';
@@ -77,7 +78,7 @@ function components(mask: Uint8Array, cols: number, rows: number): number[][] {
 }
 
 /** Looks for the grid and the chart inside the image; null if the image doesn't look like a chart. */
-export function autoGrid(img: Raster): { grid: GridSpec; confidence: number } | null {
+export function autoGrid(img: Raster): { grid: GridSpec; confidence: number; legend: RGB[] | null } | null {
   const lat = detectLattice(img);
   if (!lat) return null;
   const cols = Math.floor((img.width - lat.ox) / lat.cw);
@@ -95,8 +96,10 @@ export function autoGrid(img: Raster): { grid: GridSpec; confidence: number } | 
     r0 = Math.min(r0, r);
     r1 = Math.max(r1, r);
   }
+  const legend = findLegend(img, lat.cw)?.map((sw) => sw.rgb) ?? null;
   return {
     confidence: lat.confidence,
+    legend,
     grid: {
       x0: lat.ox + c0 * lat.cw,
       y0: lat.oy + r0 * lat.ch,
@@ -120,8 +123,12 @@ export class ImportModel {
   readonly suggestedColors: number;
   readonly maxColors: number;
   readonly suggestedCleanup: Cleanup;
+  /** Colours read from the chart's legend, if one was found and some of them are used. */
+  readonly legend: RGB[] | null;
+  private readonly distinct: RGB[] = [];
 
-  constructor(img: Raster, readonly grid: GridSpec) {
+  constructor(img: Raster, readonly grid: GridSpec, legend: RGB[] | null = null) {
+    this.legend = legend && legend.length >= 2 ? legend : null;
     this.cols = grid.cols;
     this.rows = grid.rows;
     this.samples = sampleGrid(img, grid);
@@ -144,17 +151,34 @@ export class ImportModel {
     }
     const d = distinctColors(colors);
     idx.forEach((cell, k) => (this.colorOf[cell] = d.index[k]));
+    this.distinct = d.colors;
     this.tree = new ColorTree(d.colors, d.weights);
     this.maxColors = Math.min(60, d.colors.length);
-    this.suggestedColors = Math.min(this.maxColors, this.tree.countForDistance(12));
+    this.suggestedColors = this.legend ? this.legend.length : Math.min(this.maxColors, this.tree.countForDistance(12));
     const groups = components(this.mask, this.cols, this.rows);
     this.suggestedCleanup = groups.length > 1 && groups[0].length >= idx.length * 0.7 ? 'main' : 'none';
   }
 
-  build(colorCount: number, cleanup: Cleanup): BuiltPattern {
+  /**
+   * With `useLegend`, every stitch takes the nearest of the legend's colours. Otherwise the
+   * colours are clustered down to `colorCount`.
+   */
+  build(colorCount: number, cleanup: Cleanup, useLegend = false): BuiltPattern {
     const cells = new Uint8Array(this.mask.length);
     if (!this.tree) return { cols: this.cols, rows: this.rows, cells, palette: [], removed: 0 };
-    const { assign, palette } = this.tree.cut(colorCount, MIN_COLOR_CELLS);
+    let assign: number[], palette: RGB[];
+    if (useLegend && this.legend) {
+      palette = this.legend;
+      const labs = palette.map(rgbToLab);
+      assign = this.distinct.map((rgb) => {
+        const lab = rgbToLab(rgb);
+        let best = 0;
+        for (let k = 1; k < labs.length; k++) if (labDist(lab, labs[k]) < labDist(lab, labs[best])) best = k;
+        return best;
+      });
+    } else {
+      ({ assign, palette } = this.tree.cut(colorCount, MIN_COLOR_CELLS));
+    }
     for (let i = 0; i < cells.length; i++) if (this.colorOf[i] >= 0) cells[i] = assign[this.colorOf[i]] + 1;
 
     let removed = 0;

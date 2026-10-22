@@ -6,10 +6,9 @@ import { keepAwake, wakeLockSupported } from '../wakelock';
 import { exportPattern } from '../backup';
 import { deletePattern } from '../db';
 import { chipCanvas } from '../ui/chips';
+import { openColourSheet } from '../ui/colourSheet';
 import { draw, type RenderState } from './draw';
 import { Session, type Stroke } from './session';
-
-type Tool = 'stitch' | 'edit';
 
 const PREF_KEY = 'csh-prefs';
 
@@ -34,13 +33,11 @@ function savePrefs(p: Prefs): void {
   }
 }
 
-export async function createStitchView(pattern: Pattern, goHome: () => void): Promise<View> {
+export async function createStitchView(pattern: Pattern, goHome: () => void, onEdit: () => void): Promise<View> {
   const session = new Session(pattern);
   const prefs = loadPrefs();
-  let tool: Tool = 'stitch';
   let showOriginal = false;
   let highlight = -1;
-  let brush = 0; // 0 = erase, else palette index + 1
   let image: ImageBitmap | null = null;
 
   const blob = await getImage(pattern.id);
@@ -73,11 +70,9 @@ export async function createStitchView(pattern: Pattern, goHome: () => void): Pr
     return c < 0 || r < 0 || c >= pattern.cols || r >= pattern.rows ? -1 : r * pattern.cols + c;
   };
 
-  /** Tapping or swiping on the canvas: stitch tool toggles done, edit tool paints. */
+  /** Tapping or swiping on the canvas toggles stitches; a swipe sets every cell to the opposite of the first one touched. */
   const makeStroke = (first: number): { stroke: Stroke; apply: (i: number) => void } => {
     const stroke = session.begin();
-    if (tool === 'edit') return { stroke, apply: (i) => stroke.setCell(i, brush) };
-    // Swiping sets every cell to the opposite of the first cell touched.
     const target: 0 | 1 = first >= 0 && pattern.done[first] ? 0 : 1;
     return { stroke, apply: (i) => stroke.setDone(i, target) };
   };
@@ -151,7 +146,7 @@ export async function createStitchView(pattern: Pattern, goHome: () => void): Pr
 
   // ----- bottom: tools + palette tray
   const swipeBtn = h('button', { class: 'tool-btn', on: { click: () => { prefs.swipe = !prefs.swipe; savePrefs(prefs); updateTools(); } } });
-  const editBtn = h('button', { class: 'tool-btn', on: { click: () => { tool = tool === 'edit' ? 'stitch' : 'edit'; updateTools(); updateTray(); } } });
+  const editBtn = h('button', { class: 'tool-btn', text: '✎ Fix squares', on: { click: async () => { await session.flush(); onEdit(); } } });
   const coloursBtn = h('button', { class: 'tool-btn', text: '🎨 Colours', on: { click: openColours } });
   const moreBtn = h('button', { class: 'tool-btn', text: '⋯', attrs: { 'aria-label': 'More' }, on: { click: openMenu } });
   const hint = h('div', { class: 'hint' });
@@ -162,13 +157,10 @@ export async function createStitchView(pattern: Pattern, goHome: () => void): Pr
   function updateTools(): void {
     swipeBtn.textContent = prefs.swipe ? '👆 Swipe' : '👆 Tap';
     swipeBtn.title = 'Switch between tapping single stitches and swiping across many';
-    editBtn.textContent = tool === 'edit' ? '✎ Editing cells' : '✎ Edit cells';
-    editBtn.classList.toggle('on', tool === 'edit');
     swipeBtn.classList.toggle('on', prefs.swipe);
-    if (tool === 'edit') hint.textContent = 'Pick a colour below, then tap cells to repaint them. Undo is on the right.';
-    else if (highlight >= 0) hint.textContent = `Highlighting unfinished ${labelOf(highlight)} · tap the colour again to clear`;
+    if (highlight >= 0) hint.textContent = `Highlighting unfinished ${labelOf(highlight)} · tap the colour again to clear`;
     else hint.textContent = prefs.swipe ? 'Swipe over stitches to mark them. Two fingers to move and zoom.' : 'Tap a square to mark it done. Drag to move, pinch to zoom.';
-    hint.classList.toggle('hl', tool === 'stitch' && highlight >= 0);
+    hint.classList.toggle('hl', highlight >= 0);
   }
 
   const labelOf = (k: number) => pattern.palette[k].label || `colour ${k + 1}`;
@@ -177,10 +169,6 @@ export async function createStitchView(pattern: Pattern, goHome: () => void): Pr
   function buildTray(): void {
     tray.replaceChildren();
     chips.length = 0;
-    const eraser = h('button', { class: 'chip eraser', attrs: { 'aria-label': 'Eraser' }, on: { click: () => { brush = 0; updateTray(); } } },
-      h('div', { class: 'chip-face', text: '⌫' }), h('div', { class: 'chip-count', text: 'Clear' }));
-    eraser.dataset.eraser = '1';
-    tray.append(eraser);
     pattern.palette.forEach((e, k) => {
       const count = h('div', { class: 'chip-count' });
       const el = h('button', {
@@ -188,8 +176,7 @@ export async function createStitchView(pattern: Pattern, goHome: () => void): Pr
         attrs: { 'aria-label': e.label || `Colour ${k + 1}` },
         on: {
           click: () => {
-            if (tool === 'edit') brush = k + 1;
-            else highlight = highlight === k ? -1 : k;
+            highlight = highlight === k ? -1 : k;
             updateTray();
             updateTools();
             redraw();
@@ -202,13 +189,10 @@ export async function createStitchView(pattern: Pattern, goHome: () => void): Pr
   }
 
   function updateTray(): void {
-    const editing = tool === 'edit';
-    (tray.firstElementChild as HTMLElement).style.display = editing ? '' : 'none';
-    (tray.firstElementChild as HTMLElement).classList.toggle('sel', editing && brush === 0);
     chips.forEach(({ el, count }, k) => {
-      el.classList.toggle('sel', editing ? brush === k + 1 : highlight === k);
-      el.classList.toggle('finished', !editing && session.left[k] === 0);
-      count.textContent = editing ? pattern.palette[k].label || String(k + 1) : session.left[k] === 0 ? '✓' : String(session.left[k]);
+      el.classList.toggle('sel', highlight === k);
+      el.classList.toggle('finished', session.left[k] === 0);
+      count.textContent = session.left[k] === 0 ? '✓' : String(session.left[k]);
     });
   }
 
@@ -227,57 +211,21 @@ export async function createStitchView(pattern: Pattern, goHome: () => void): Pr
 
   // ----- sheets
   function openColours(): void {
-    const body = h('div', { class: 'sheet-body' });
-    const render = () => {
-      body.replaceChildren(
-        h('p', { class: 'muted', text: 'Name each colour (for example its thread number from the legend). Tap a row to highlight what is left of that colour.' }),
-      );
-      pattern.palette.forEach((e, k) => {
-        const input = h('input', { class: 'text-in', attrs: { type: 'text', placeholder: `Colour ${k + 1}`, value: e.label, maxlength: '24' } });
-        input.addEventListener('input', () => {
-          e.label = input.value;
-          session.paletteChanged();
-        });
-        const picker = h('input', { class: 'color-in', attrs: { type: 'color', value: '#' + e.rgb.map((v) => v.toString(16).padStart(2, '0')).join('') } });
-        picker.addEventListener('change', () => {
-          const v = parseInt(picker.value.slice(1), 16);
-          e.rgb = [(v >> 16) & 255, (v >> 8) & 255, v & 255];
-          buildTray();
-          session.paletteChanged();
-          render();
-        });
-        body.append(
-          h('div', { class: 'color-row' },
-            picker,
-            input,
-            h('button', {
-              class: 'btn small',
-              text: `${session.left[k]} left`,
-              on: { click: () => { tool = 'stitch'; highlight = highlight === k ? -1 : k; s.close(); updateTools(); updateTray(); redraw(); } },
-            }),
-          ),
-        );
-      });
-      body.append(
-        h('div', { class: 'row' },
-          h('button', {
-            class: 'btn',
-            text: '+ Add colour',
-            on: {
-              click: () => {
-                if (pattern.palette.length >= 254) return toast('That is the most colours a pattern can hold');
-                pattern.palette.push({ rgb: [128, 128, 128], label: '' });
-                buildTray();
-                session.paletteChanged();
-                render();
-              },
-            },
-          }),
-        ),
-      );
-    };
-    render();
-    const s = sheet('Colours', body);
+    openColourSheet({
+      session,
+      onChanged: () => {
+        if (highlight >= pattern.palette.length) highlight = -1;
+        buildTray();
+        updateTools();
+        updateProgress();
+      },
+      onHighlight: (k) => {
+        highlight = highlight === k ? -1 : k;
+        updateTools();
+        updateTray();
+        redraw();
+      },
+    });
   }
 
   function openMenu(): void {

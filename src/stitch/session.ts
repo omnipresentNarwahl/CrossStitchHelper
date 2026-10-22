@@ -1,4 +1,5 @@
 import { savePattern } from '../db';
+import type { RGB as RGBTuple } from '../core/raster';
 import type { Pattern, ViewState } from '../types';
 
 interface Op {
@@ -22,9 +23,11 @@ export class Session {
   total: number[] = [];
   leftAll = 0;
   totalAll = 0;
+  /** Bumps whenever the pattern is edited, so callers can tell whether anything changed. */
+  revision = 0;
   onChange: () => void = () => undefined;
 
-  constructor(readonly pattern: Pattern) {
+  constructor(readonly pattern: Pattern, private readonly persist = true) {
     this.recount();
   }
 
@@ -60,6 +63,7 @@ export class Session {
     this.undoStack.push(op);
     if (this.undoStack.length > MAX_HISTORY) this.undoStack.shift();
     this.redoStack = [];
+    this.revision++;
     this.changed();
   }
 
@@ -68,6 +72,7 @@ export class Session {
     if (!op) return;
     this.apply(op.idx, op.cell0, op.done0);
     this.redoStack.push(op);
+    this.revision++;
     this.changed();
   }
 
@@ -76,6 +81,7 @@ export class Session {
     if (!op) return;
     this.apply(op.idx, op.cell1, op.done1);
     this.undoStack.push(op);
+    this.revision++;
     this.changed();
   }
 
@@ -102,18 +108,45 @@ export class Session {
 
   /** Palette edits (labels, new colours) that don't go through undo. */
   paletteChanged(): void {
+    this.revision++;
     this.recount();
     this.scheduleSave();
     this.onChange();
   }
 
+  /** Folds colour `from` into colour `to` (palette indices) and removes `from`. Clears undo history. */
+  mergeColor(from: number, to: number): void {
+    if (from === to) return;
+    const p = this.pattern;
+    const remap = (v: number): number => {
+      if (!v) return 0;
+      const k = v - 1 === from ? to : v - 1;
+      return (k > from ? k - 1 : k) + 1;
+    };
+    for (let i = 0; i < p.cells.length; i++) p.cells[i] = remap(p.cells[i]);
+    p.palette.splice(from, 1);
+    this.undoStack = [];
+    this.redoStack = [];
+    this.revision++;
+    this.changed();
+  }
+
+  /** Adds a colour to the palette and returns its index. */
+  addColor(rgb: RGBTuple): number {
+    this.pattern.palette.push({ rgb, label: '' });
+    this.paletteChanged();
+    return this.pattern.palette.length - 1;
+  }
+
   private scheduleSave(): void {
+    if (!this.persist) return;
     this.dirty = true;
     clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => void this.flush(), 400);
   }
 
   async flush(): Promise<void> {
+    if (!this.persist) return;
     clearTimeout(this.saveTimer);
     if (!this.dirty) return;
     this.dirty = false;
