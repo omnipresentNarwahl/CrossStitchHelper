@@ -1,7 +1,8 @@
 import './style.css';
-import { getPattern, requestPersistence } from './db';
+import { getImage, getPattern, requestPersistence } from './db';
 import { createHome } from './home';
 import { createImportView } from './import/importView';
+import { createEditView } from './stitch/editView';
 import { createStitchView } from './stitch/stitchView';
 import { h, toast, type View } from './ui/dom';
 
@@ -37,7 +38,21 @@ async function route(): Promise<void> {
         location.replace('#/');
         return;
       }
-      next = await createStitchView(p, goHome);
+      next = await createStitchView(p, goHome, () => go(`#/edit/${p.id}`));
+    } else if (hash.startsWith('#/edit/')) {
+      const p = await getPattern(decodeURIComponent(hash.slice(7)));
+      if (!p) {
+        location.replace('#/');
+        return;
+      }
+      const blob = await getImage(p.id);
+      const image = blob ? await createImageBitmap(blob) : null;
+      const back = () => {
+        if (internalNav && history.length > 1) history.back();
+        else location.replace(`#/p/${p.id}`);
+      };
+      const edit = createEditView(p, { persist: true, image, onClose: back });
+      next = { el: edit.el, destroy: () => { edit.destroy(); image?.close(); } };
     } else if (hash === '#/import') {
       const file = pendingFile;
       pendingFile = null;

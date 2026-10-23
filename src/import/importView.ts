@@ -1,12 +1,12 @@
 import { autoGrid, ImportModel, type BuiltPattern, type Cleanup } from '../core/model';
-import { contrastInk } from '../core/color';
 import type { Raster } from '../core/raster';
 import type { GridSpec } from '../core/sample';
 import { savePattern } from '../db';
 import { draw } from '../stitch/draw';
 import type { Pattern } from '../types';
 import { chipCanvas } from '../ui/chips';
-import { h, toast, type View } from '../ui/dom';
+import { confirmDialog, h, toast, type View } from '../ui/dom';
+import { createEditView } from '../stitch/editView';
 import { Viewport, type DragHandler, type Rect } from '../ui/viewport';
 
 const MAX_SIDE = 3200;
@@ -49,6 +49,7 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
   const { raster } = loaded;
 
   const auto = autoGrid(raster);
+  const legend = auto?.legend ?? null;
   const lattice = auto && auto.confidence > 0.2 ? auto.grid : null;
   const fallbackCols = 40;
   let grid: GridSpec = auto?.grid ?? {
@@ -220,7 +221,7 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
       h('div', { class: 'topbar' },
         h('button', { class: 'icon-btn', text: '✕', attrs: { 'aria-label': 'Cancel' }, on: { click: onCancel } }),
         h('div', { class: 'title-wrap' }, h('div', { class: 'title', text: 'Step 1 of 2 · Line up the grid' })),
-        h('button', { class: 'btn primary small', text: 'Next →', on: { click: () => showReviewStep() } }),
+        h('button', { class: 'btn primary small', text: 'Next →', on: { click: () => { review = null; showReviewStep(); } } }),
       ),
       h('div', { class: 'stage-wrap' }, canvas),
       h('div', { class: 'bottom panel' },
@@ -242,19 +243,21 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
   }
 
   // ---------------------------------------------------------------- step 2: colours
-  function showReviewStep(): void {
-    const model = new ImportModel(raster, grid);
-    if (!model.maxColors) {
-      toast('No stitches found in that area. Try adjusting the corners.');
-      return;
-    }
-    let colorCount = model.suggestedColors;
-    let cleanup: Cleanup = model.suggestedCleanup;
-    let built: BuiltPattern = model.build(colorCount, cleanup);
-    let showOriginal = false;
-    let name = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() || 'My pattern';
+  interface Review {
+    model: ImportModel;
+    colorCount: number;
+    useLegend: boolean;
+    cleanup: Cleanup;
+    built: BuiltPattern;
+    pat: Pattern;
+    /** The user has hand-edited squares; rebuilding would throw those edits away. */
+    edited: boolean;
+    name: string;
+  }
+  let review: Review | null = null;
 
-    const preview = (): Pattern => ({
+  function makePattern(built: BuiltPattern, name: string): Pattern {
+    return {
       id: 'preview',
       name,
       cols: built.cols,
@@ -267,8 +270,27 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
       imageGrid: { x0: grid.x0, y0: grid.y0, cw: grid.cw, ch: grid.ch },
       created: Date.now(),
       updated: Date.now(),
-    });
-    let pat = preview();
+    };
+  }
+
+  function startReview(): boolean {
+    const model = new ImportModel(raster, grid, legend);
+    if (!model.maxColors) {
+      toast('No stitches found in that area. Try adjusting the corners.');
+      return false;
+    }
+    const useLegend = !!model.legend;
+    const cleanup = model.suggestedCleanup;
+    const built = model.build(model.suggestedColors, cleanup, useLegend);
+    const name = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() || 'My pattern';
+    review = { model, colorCount: model.suggestedColors, useLegend, cleanup, built, pat: makePattern(built, name), edited: false, name };
+    return true;
+  }
+
+  function showReviewStep(): void {
+    if (!review && !startReview()) return;
+    const r = review!;
+    let showOriginal = false;
 
     const canvas = h('canvas', { class: 'stage' });
     const ctx = canvas.getContext('2d')!;
@@ -277,13 +299,13 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
       if (raf) return;
       raf = requestAnimationFrame(() => {
         raf = 0;
-        draw(ctx, vp, { pattern: pat, showOriginal, image: loaded.source, highlight: -1, preview: true });
+        draw(ctx, vp, { pattern: r.pat, showOriginal, image: loaded.source, highlight: -1, preview: true });
       });
     };
     const bounds = (): Rect => {
-      if (!showOriginal) return { x0: 0, y0: 0, x1: pat.cols, y1: pat.rows };
-      const g = pat.imageGrid;
-      return { x0: Math.min(0, -g.x0 / g.cw), y0: Math.min(0, -g.y0 / g.ch), x1: Math.max(pat.cols, (pat.imageW - g.x0) / g.cw), y1: Math.max(pat.rows, (pat.imageH - g.y0) / g.ch) };
+      if (!showOriginal) return { x0: 0, y0: 0, x1: r.pat.cols, y1: r.pat.rows };
+      const g = r.pat.imageGrid;
+      return { x0: Math.min(0, -g.x0 / g.cw), y0: Math.min(0, -g.y0 / g.ch), x1: Math.max(r.pat.cols, (r.pat.imageW - g.x0) / g.cw), y1: Math.max(r.pat.rows, (r.pat.imageH - g.y0) / g.ch) };
     };
     const vp = new Viewport({ canvas, onChange: redraw, bounds, minScale: 0.5, maxScale: 90 });
 
@@ -298,36 +320,69 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
 
     const summary = h('div', { class: 'muted' });
     const swatches = h('div', { class: 'swatches' });
-    const countLabel = h('strong');
-    const slider = h('input', { class: 'slider', attrs: { type: 'range', min: '2', max: String(Math.max(2, model.maxColors)), value: String(colorCount) } });
-    function rebuild(): void {
-      built = model.build(colorCount, cleanup);
-      pat = preview();
-      countLabel.textContent = `${built.palette.length} colours`;
-      const counts = new Array(built.palette.length).fill(0);
-      built.cells.forEach((v) => v && counts[v - 1]++);
-      swatches.replaceChildren(
-        ...built.palette.map((rgb, k) => h('div', { class: 'swatch' }, chipCanvas(k, rgb, 30), h('span', { class: 'chip-count', style: { color: contrastInk([255, 255, 255]) }, text: String(counts[k]) }))),
-      );
-      const stitches = counts.reduce((a: number, b: number) => a + b, 0);
-      summary.textContent = `${built.cols} × ${built.rows} squares · ${stitches} stitches${built.removed ? ` · ${built.removed} stray squares ignored` : ''}`;
+    const colourNote = h('div', { class: 'note' });
+    const legendBtn = h('button', { class: 'btn small', on: { click: () => change(() => { r.useLegend = true; r.colorCount = r.model.suggestedColors; }) } });
+    const numIn = h('input', { class: 'num-in', attrs: { type: 'number', inputmode: 'numeric', min: '1', max: String(r.model.maxColors), step: '1', 'aria-label': 'Number of colours' } });
+
+    /** Applies a setting change by rebuilding the pattern, after checking nothing hand-made would be lost. */
+    async function change(apply: () => void): Promise<void> {
+      if (r.edited && !(await confirmDialog('Changing this rebuilds the pattern and discards the squares you fixed by hand.', 'Rebuild'))) {
+        refresh();
+        return;
+      }
+      apply();
+      r.built = r.model.build(r.colorCount, r.cleanup, r.useLegend);
+      r.pat = makePattern(r.built, r.name);
+      r.edited = false;
+      refresh();
       redraw();
     }
-    slider.addEventListener('input', () => {
-      colorCount = Number(slider.value);
-      rebuild();
-    });
+
+    function refresh(): void {
+      const counts = new Array(r.pat.palette.length).fill(0);
+      r.pat.cells.forEach((v) => v && counts[v - 1]++);
+      const stitches = counts.reduce((a: number, b: number) => a + b, 0);
+      numIn.value = String(r.useLegend ? r.model.suggestedColors : r.colorCount);
+      swatches.replaceChildren(
+        ...r.pat.palette.map((e, k) => h('div', { class: 'swatch' }, chipCanvas(k, e.rgb, 30), h('span', { class: 'chip-count', text: String(counts[k]) }))),
+      );
+      summary.textContent = `${r.pat.cols} × ${r.pat.rows} squares · ${stitches} stitches · ${r.pat.palette.length} colours${r.built.removed && !r.edited ? ` · ${r.built.removed} stray squares ignored` : ''}`;
+      if (r.useLegend) {
+        colourNote.className = 'note good';
+        colourNote.textContent = `✓ Matched to the ${r.model.legend!.length} colours found in the chart's legend. Change the number to group colours automatically instead.`;
+        legendBtn.style.display = 'none';
+      } else {
+        colourNote.className = 'note';
+        colourNote.textContent = r.model.legend ? 'Grouping colours automatically.' : 'No legend found in the image, so colours are grouped automatically. Raise or lower the number until the pattern looks right.';
+        legendBtn.textContent = `Use the ${r.model.legend?.length ?? 0} legend colours`;
+        legendBtn.style.display = r.model.legend ? '' : 'none';
+      }
+    }
+
+    const setCount = (n: number) => {
+      const v = Math.max(1, Math.min(r.model.maxColors, Math.round(n)));
+      if (!Number.isFinite(v)) return refresh();
+      if (!r.useLegend && v === r.colorCount) return refresh();
+      void change(() => {
+        r.useLegend = false;
+        r.colorCount = v;
+      });
+    };
+    numIn.addEventListener('change', () => setCount(Number(numIn.value)));
+    const stepBy = (d: number) => setCount((r.useLegend ? r.model.suggestedColors : r.colorCount) + d);
 
     const cleanupOpts: [Cleanup, string][] = [['none', 'Keep everything'], ['small', 'Drop tiny bits'], ['main', 'Main picture only']];
-    const cleanupBtns = cleanupOpts.map(([value, text]) => {
-      const b = h('button', { class: 'seg', text, on: { click: () => { cleanup = value; sync(); rebuild(); } } });
-      return { value, b };
-    });
-    const sync = () => cleanupBtns.forEach(({ value, b }) => b.classList.toggle('active', value === cleanup));
-    sync();
+    const cleanupBtns = cleanupOpts.map(([value, text]) => ({
+      value,
+      b: h('button', { class: 'seg', text, on: { click: () => { void change(() => { r.cleanup = value; }).then(syncCleanup); } } }),
+    }));
+    const syncCleanup = () => cleanupBtns.forEach(({ value, b }) => b.classList.toggle('active', value === r.cleanup));
 
-    const nameIn = h('input', { class: 'text-in', attrs: { type: 'text', value: name, maxlength: '60' } });
-    nameIn.addEventListener('input', () => (name = nameIn.value));
+    const nameIn = h('input', { class: 'text-in', attrs: { type: 'text', value: r.name, maxlength: '60' } });
+    nameIn.addEventListener('input', () => {
+      r.name = nameIn.value;
+      r.pat.name = nameIn.value;
+    });
 
     const create = h('button', {
       class: 'btn primary big',
@@ -336,21 +391,34 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
         click: async () => {
           create.setAttribute('disabled', '');
           const id = crypto.randomUUID();
-          const p: Pattern = {
-            ...pat,
-            id,
-            name: name.trim() || 'My pattern',
-            palette: built.palette.map((rgb) => ({ rgb, label: '' })),
-          };
+          const p: Pattern = { ...r.pat, id, name: r.name.trim() || 'My pattern' };
           await savePattern(p, loaded.blob);
           onCreated(id);
         },
       },
     });
 
+    const fix = h('button', {
+      class: 'btn',
+      text: '✎ Fix squares by hand (compare side by side)',
+      on: {
+        click: () => {
+          const ed = createEditView(r.pat, {
+            persist: false,
+            image: loaded.source,
+            onClose: (changed) => {
+              if (changed) r.edited = true;
+              showReviewStep();
+            },
+          });
+          show(ed.el, ed.destroy);
+        },
+      },
+    });
+
     const el = h('div', { class: 'screen-inner' },
       h('div', { class: 'topbar' },
-        h('button', { class: 'icon-btn', text: '←', attrs: { 'aria-label': 'Back' }, on: { click: () => showGridStep() } }),
+        h('button', { class: 'icon-btn', text: '←', attrs: { 'aria-label': 'Back' }, on: { click: () => { review = null; showGridStep(); } } }),
         h('div', { class: 'title-wrap' }, h('div', { class: 'title', text: 'Step 2 of 2 · Check it' })),
         h('div', { class: 'segmented' }, segPattern, segOriginal),
       ),
@@ -358,9 +426,22 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
       h('div', { class: 'bottom panel scroll-panel' },
         summary,
         h('label', { class: 'field' }, h('span', { text: 'Name' }), nameIn),
-        h('div', { class: 'field' }, h('div', { class: 'row space' }, h('span', { text: 'Number of colours' }), countLabel), slider, swatches),
+        h('div', { class: 'field' },
+          h('div', { class: 'row space' },
+            h('span', { text: 'Number of colours' }),
+            h('div', { class: 'num-field' },
+              h('button', { class: 'icon-btn', text: '−', attrs: { 'aria-label': 'Fewer colours' }, on: { click: () => stepBy(-1) } }),
+              numIn,
+              h('button', { class: 'icon-btn', text: '+', attrs: { 'aria-label': 'More colours' }, on: { click: () => stepBy(1) } }),
+            ),
+          ),
+          colourNote,
+          legendBtn,
+          swatches,
+        ),
         h('div', { class: 'field' }, h('span', { text: 'Stray bits (legend, labels)' }), h('div', { class: 'segmented wide' }, ...cleanupBtns.map((c) => c.b))),
-        h('p', { class: 'muted', text: 'Tap “Original” above to compare with your image. You can fix individual squares later with “Edit cells”.' }),
+        h('p', { class: 'muted', text: 'Use “Original” above to compare with your image.' }),
+        fix,
         create,
       ),
     );
@@ -368,10 +449,11 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
       vp.destroy();
       cancelAnimationFrame(raf);
     });
-    rebuild();
+    syncCleanup();
+    refresh();
     requestAnimationFrame(() => {
       vp.resize();
-      vp.fit({ x0: 0, y0: 0, x1: pat.cols, y1: pat.rows });
+      vp.fit({ x0: 0, y0: 0, x1: r.pat.cols, y1: r.pat.rows });
       redraw();
     });
   }

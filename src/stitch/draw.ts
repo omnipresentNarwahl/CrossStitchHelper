@@ -12,6 +12,10 @@ export interface RenderState {
   highlight: number;
   /** Draw every cell in full colour regardless of progress (used while importing). */
   preview?: boolean;
+  /** Cell index to ring (the square being edited), or -1. */
+  focus?: number;
+  /** Draw the pattern's grid lines on top of the original image. */
+  gridOverlay?: boolean;
 }
 
 const WHITE: RGB = [255, 255, 255];
@@ -95,9 +99,19 @@ export function draw(ctx: CanvasRenderingContext2D, vp: Viewport, s: RenderState
     ctx.imageSmoothingEnabled = px < 24;
     ctx.drawImage(s.image, -g.x0 / g.cw, -g.y0 / g.ch, p.imageW / g.cw, p.imageH / g.ch);
     drawOriginalOverlay(ctx, s, c0, c1, r0, r1, px);
+    if (s.gridOverlay && px >= 5) drawGridLines(ctx, p, c0, c1, r0, r1, px, dpr, 'rgba(255,45,149,0.55)');
   } else {
     drawPatternCells(ctx, s, c0, c1, r0, r1, px);
     drawGridLines(ctx, p, c0, c1, r0, r1, px, dpr);
+  }
+  if (s.focus !== undefined && s.focus >= 0) {
+    const fx = s.focus % p.cols, fy = (s.focus / p.cols) | 0;
+    ctx.lineWidth = Math.max(2.5 / px, 0.08);
+    ctx.strokeStyle = '#fff';
+    ctx.strokeRect(fx - ctx.lineWidth * 0.5, fy - ctx.lineWidth * 0.5, 1 + ctx.lineWidth, 1 + ctx.lineWidth);
+    ctx.lineWidth = Math.max(1.5 / px, 0.05);
+    ctx.strokeStyle = '#0a84ff';
+    ctx.strokeRect(fx - ctx.lineWidth, fy - ctx.lineWidth, 1 + 2 * ctx.lineWidth, 1 + 2 * ctx.lineWidth);
   }
   drawRulers(ctx, vp, p);
 }
@@ -175,10 +189,10 @@ function drawOriginalOverlay(ctx: CanvasRenderingContext2D, s: RenderState, c0: 
   ctx.strokeRect(0, 0, p.cols, p.rows);
 }
 
-function drawGridLines(ctx: CanvasRenderingContext2D, p: Pattern, c0: number, c1: number, r0: number, r1: number, px: number, dpr: number): void {
+function drawGridLines(ctx: CanvasRenderingContext2D, p: Pattern, c0: number, c1: number, r0: number, r1: number, px: number, dpr: number, thin = 'rgba(0,0,0,0.2)'): void {
   const hair = 1 / (dpr * px);
   if (px >= 5) {
-    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+    ctx.strokeStyle = thin;
     ctx.lineWidth = hair;
     ctx.beginPath();
     for (let c = c0; c <= c1; c++) {
