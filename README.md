@@ -29,6 +29,7 @@ Merge to `main`, then in the repo go to **Settings → Pages → Source: GitHub 
 ## How import works
 
 - `src/core/detect.ts` finds the grid spacing and offset from the faint repeating lines (Fourier scan of the line profile).
+- If the grid isn't found (or is wrong), the first import step lets you drag the two corners around the chart and press **Find grid here**, which re-runs detection on just that area. **Mark one square** (draw a box around a single square) and the Columns/Rows counts are used as size hints. Charts with no grid lines at all are handled by looking at the edges between coloured squares.
 - `src/core/sample.ts` takes the dominant colour of each square, ignoring dark symbols and backstitch lines; a dark mark in the middle of a white square is treated as a white stitch.
 - `src/core/quantize.ts` clusters colours (agglomerative, in Lab space) so the "number of colours" slider is instant.
 - `src/core/legend.ts` finds the legend: same-sized swatches lined up in a column or row, reading each swatch's colour.

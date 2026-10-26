@@ -1,3 +1,5 @@
+import { detectLatticeIn, snapRegionToLattice, type Region } from '../core/detect';
+import { findLegend } from '../core/legend';
 import { autoGrid, ImportModel, type BuiltPattern, type Cleanup } from '../core/model';
 import type { Raster } from '../core/raster';
 import type { GridSpec } from '../core/sample';
@@ -49,8 +51,16 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
   const { raster } = loaded;
 
   const auto = autoGrid(raster);
-  const legend = auto?.legend ?? null;
-  const lattice = auto && auto.confidence > 0.2 ? auto.grid : null;
+  let legend = auto?.legend ?? null;
+  /** Where grid lines are believed to be; lets the corner handles snap to them. */
+  let lattice: { x0: number; y0: number; cw: number; ch: number } | null = auto && auto.confidence > 0.2 ? auto.grid : null;
+  const autoFailed = !lattice;
+  /** Hints the user has given for re-running detection. */
+  let cellBox: Region | null = null;
+  let sizeTouched = false;
+  let detectNote: { text: string; kind: 'good' | 'warn' | '' } = autoFailed
+    ? { text: "We couldn't find the grid automatically. Drag corners 1 and 2 around the chart, then tap “Find grid”. You can also mark one square or set how many columns and rows there are first.", kind: 'warn' }
+    : { text: '', kind: '' };
   const fallbackCols = 40;
   let grid: GridSpec = auto?.grid ?? {
     x0: 0,
@@ -85,6 +95,36 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
     const bounds = (): Rect => ({ x0: 0, y0: 0, x1: loaded.width, y1: loaded.height });
     const corner = (which: 'tl' | 'br') => (which === 'tl' ? { x: grid.x0, y: grid.y0 } : { x: grid.x0 + grid.cols * grid.cw, y: grid.y0 + grid.rows * grid.ch });
 
+    let markMode = false;
+
+    /** Re-runs grid detection on the area between the corners, using any hints the user gave. */
+    function findGrid(): void {
+      const tl = corner('tl'), br = corner('br');
+      const region: Region = { x0: tl.x, y0: tl.y, x1: br.x, y1: br.y };
+      let hint: { w: number; h: number } | undefined;
+      if (cellBox) hint = { w: Math.abs(cellBox.x1 - cellBox.x0), h: Math.abs(cellBox.y1 - cellBox.y0) };
+      else if (sizeTouched) hint = { w: (region.x1 - region.x0) / grid.cols, h: (region.y1 - region.y0) / grid.rows };
+      const lat = detectLatticeIn(raster, region, { cellHint: hint });
+      const snapped = lat ? snapRegionToLattice(lat, region) : null;
+      if (!lat || !snapped || lat.confidence < 0.1) {
+        detectNote = {
+          text: "Still can't see a clear grid there. Try zooming in and drawing a box around one square (“Mark one square”), or enter the number of columns and rows and try again. You can also line the corners up by hand and carry on.",
+          kind: 'warn',
+        };
+      } else {
+        lattice = { x0: lat.ox, y0: lat.oy, cw: lat.cw, ch: lat.ch };
+        grid = { x0: snapped.x0, y0: snapped.y0, cw: lat.cw, ch: lat.ch, cols: snapped.cols, rows: snapped.rows };
+        legend = findLegend(raster, lat.cw)?.map((sw) => sw.rgb) ?? legend;
+        detectNote = {
+          text: `Found a grid of ${snapped.cols} × ${snapped.rows} squares${lat.confidence < 0.3 ? ' (a weak match, so please check the pink lines sit on the chart’s lines)' : ''}. Adjust the corners if it’s not quite right.`,
+          kind: lat.confidence < 0.3 ? 'warn' : 'good',
+        };
+      }
+      updateInfo();
+      updateNote();
+      redraw();
+    }
+
     const snap = (v: number, origin: number, step: number) => (lattice ? origin + Math.round((v - origin) / step) * step : v);
 
     function setCorner(which: 'tl' | 'br', wx: number, wy: number): void {
@@ -113,7 +153,34 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
       bounds,
       minScale: 0.05,
       maxScale: 40,
-      beginDrag: (_wx: number, _wy: number, sx: number, sy: number) => {
+      beginDrag: (wx: number, wy: number, sx: number, sy: number) => {
+        if (markMode) {
+          cellBox = { x0: wx, y0: wy, x1: wx, y1: wy };
+          const handler: DragHandler = {
+            move: (x, y) => {
+              cellBox = { x0: wx, y0: wy, x1: x, y1: y };
+              redraw();
+            },
+            end: () => {
+              const w = Math.abs(cellBox!.x1 - cellBox!.x0), hh = Math.abs(cellBox!.y1 - cellBox!.y0);
+              markMode = false;
+              syncMark();
+              if (w < 4 || hh < 4) {
+                cellBox = null;
+                redraw();
+                return;
+              }
+              findGrid();
+            },
+            cancel: () => {
+              cellBox = null;
+              markMode = false;
+              syncMark();
+              redraw();
+            },
+          };
+          return handler;
+        }
         for (const which of ['tl', 'br'] as const) {
           const c = corner(which);
           const s = vp.worldToScreen(c.x, c.y);
@@ -168,6 +235,11 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
         ctx.rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
       }
       ctx.stroke();
+      if (cellBox) {
+        ctx.lineWidth = 2 / vp.scale;
+        ctx.strokeStyle = '#ffd400';
+        ctx.strokeRect(Math.min(cellBox.x0, cellBox.x1), Math.min(cellBox.y0, cellBox.y1), Math.abs(cellBox.x1 - cellBox.x0), Math.abs(cellBox.y1 - cellBox.y0));
+      }
       // Handles are drawn at a fixed screen size.
       ctx.setTransform(vp.dpr, 0, 0, vp.dpr, 0, 0);
       (['tl', 'br'] as const).forEach((which, n) => {
@@ -198,6 +270,7 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
     }
 
     function resize(axis: 'cols' | 'rows', d: number): void {
+      sizeTouched = true;
       const n = Math.max(1, grid[axis] + d);
       if (axis === 'cols') {
         grid = lattice ? { ...grid, cols: n } : { ...grid, cols: n, cw: (grid.cols * grid.cw) / n };
@@ -214,6 +287,19 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
         val,
         h('button', { class: 'icon-btn', text: '+', on: { click: () => resize(axis, 1) } }),
       );
+    const note = h('div', { class: 'note' });
+    function updateNote(): void {
+      note.className = `note ${detectNote.kind}`;
+      note.textContent = detectNote.text;
+      note.style.display = detectNote.text ? '' : 'none';
+    }
+    const markBtn = h('button', { class: 'btn small', on: { click: () => { markMode = !markMode; if (markMode) cellBox = null; syncMark(); redraw(); } } });
+    function syncMark(): void {
+      markBtn.textContent = markMode ? '▢ Drag around 1 square' : '▢ Mark one square';
+      markBtn.classList.toggle('on', markMode);
+    }
+    syncMark();
+    updateNote();
     const colsStepper = stepper('Columns', colsVal, 'cols');
     const rowsStepper = stepper('Rows', rowsVal, 'rows');
 
@@ -225,15 +311,28 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
       ),
       h('div', { class: 'stage-wrap' }, canvas),
       h('div', { class: 'bottom panel' },
-        h('p', { class: 'muted', text: auto ? 'Drag the pink corners 1 and 2 to the outer edges of the stitched area (legend boxes are fine to leave inside). Pinch to zoom.' : 'Could not find the grid automatically. Drag the corners around the chart, then set the number of columns and rows.' }),
-        h('div', { class: 'row space' }, info, h('button', { class: 'btn small', text: 'Reset', on: { click: () => { grid = { ...initialGrid }; updateInfo(); redraw(); } } })),
+        note,
+        h('p', { class: 'muted', text: 'Drag pink corners 1 and 2 to the outer edges of the stitched area (a legend inside is fine). Pinch to zoom.' }),
+        h('div', { class: 'row wrap' },
+          h('button', { class: `btn small ${autoFailed ? 'primary' : ''}`, text: '🔍 Find grid here', on: { click: findGrid } }),
+          markBtn,
+        ),
+        h('div', { class: 'row space' }, info, h('button', { class: 'btn small', text: 'Reset', on: { click: () => { grid = { ...initialGrid }; cellBox = null; sizeTouched = false; updateInfo(); redraw(); } } })),
         h('div', { class: 'row space' }, colsStepper, rowsStepper),
       ),
       h('div', { class: 'action-bar' },
         h('button', { class: 'btn primary big grow', text: 'Next: check colours →', on: { click: () => { review = null; showReviewStep(); } } }),
       ),
     );
+    // Keep the whole image in view while the panel below settles, until the user starts moving it.
+    let userMoved = false;
+    canvas.addEventListener('pointerdown', () => (userMoved = true));
+    const ro = new ResizeObserver(() => {
+      if (!userMoved) requestAnimationFrame(() => { vp.fit(bounds(), 4); redraw(); });
+    });
+    ro.observe(canvas);
     show(el, () => {
+      ro.disconnect();
       vp.destroy();
       cancelAnimationFrame(raf);
     });

@@ -154,3 +154,8 @@ p { margin: 0 0 0.5em; }
   background-size: 100% 36px, 100% 36px, 100% 12px, 100% 12px;
   background-attachment: local, local, scroll, scroll;
 }
+.note.warn { color: #9a5b00; background: #fff4de; border-radius: 10px; padding: 8px 10px; font-weight: 500; }
+.note.good { background: #e8f6ee; border-radius: 10px; padding: 8px 10px; }
+.btn.on { background: #fff6c2; border-color: #e6bd00; }
+.bottom.panel { max-height: 46%; overflow-y: auto; }
+.row.wrap { flex-wrap: wrap; }
