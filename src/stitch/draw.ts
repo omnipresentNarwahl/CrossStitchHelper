@@ -1,4 +1,5 @@
 import { contrastInk, mix, rgbCss } from '../core/color';
+import { luma as lumaOf } from '../core/raster';
 import type { RGB } from '../core/raster';
 import type { Pattern } from '../types';
 import type { Viewport } from '../ui/viewport';
@@ -37,21 +38,35 @@ function fillsFor(p: Pattern): Fills[] {
   const key = p.palette.map((e) => e.rgb.join(',')).join(';');
   const hit = fillCache.get(p);
   if (hit && hit.rgbs === key) return hit.fills;
-  const fills = p.palette.map((e) => ({
+  const fills = p.palette.map((e0) => {
+    // White and near-white thread would vanish into the blank page, so give it a faint cool tint.
+    const e = { ...e0, rgb: lumaOf(...e0.rgb) > 238 ? mix(e0.rgb, [205, 210, 222], 0.28) : e0.rgb };
+    return {
     full: rgbCss(e.rgb),
     ghost: rgbCss(mix(e.rgb, WHITE, 0.62)),
     faded: rgbCss(mix(mix(e.rgb, [170, 170, 170], 0.55), WHITE, 0.5)),
     ink: contrastInk(e.rgb),
     inkGhost: rgbCss(mix(e.rgb, [0, 0, 0], 0.45)),
-  }));
+    };
+  });
   fillCache.set(p, { rgbs: key, fills });
   return fills;
 }
 
 /** Each palette colour gets its own little mark so cells stay identifiable when colours are close. */
+const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789abcdefghjkmnpqrstuvwxyz';
+
 export function drawSymbol(ctx: CanvasRenderingContext2D, index: number, cx: number, cy: number, r: number): void {
+  if (index >= 12) {
+    // Past the twelve shapes, use letters and digits.
+    ctx.font = `700 ${r * 2.4}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(LETTERS[(index - 12) % LETTERS.length], cx, cy + r * 0.08);
+    return;
+  }
   ctx.beginPath();
-  switch (index % 12) {
+  switch (index) {
     case 0: ctx.arc(cx, cy, r * 0.8, 0, Math.PI * 2); ctx.fill(); return;
     case 1: ctx.rect(cx - r * 0.7, cy - r * 0.7, r * 1.4, r * 1.4); ctx.fill(); return;
     case 2: ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy + r * 0.8); ctx.lineTo(cx - r, cy + r * 0.8); ctx.closePath(); ctx.fill(); return;
@@ -125,7 +140,7 @@ function drawPatternCells(ctx: CanvasRenderingContext2D, s: RenderState, c0: num
   const fills = fillsFor(p);
   ctx.fillStyle = PAPER;
   ctx.fillRect(0, 0, p.cols, p.rows);
-  const showMarks = px >= 13;
+  const showMarks = px >= 10;
   const hl = s.highlight;
   const outlined: number[] = [];
 

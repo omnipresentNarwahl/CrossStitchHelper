@@ -77,3 +77,15 @@ export function confirmDialog(message: string, okLabel: string): Promise<boolean
     s = sheet('Are you sure?', body);
   });
 }
+
+/** Shows a "working" overlay while `work` runs, letting the browser paint it first (the work blocks the page). */
+export async function withBusy<T>(message: string, work: () => T): Promise<T> {
+  const overlay = h('div', { class: 'busy' }, h('div', { class: 'busy-box' }, h('div', { class: 'spinner' }), h('div', { text: message })));
+  document.body.append(overlay);
+  await new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 30)));
+  try {
+    return work();
+  } finally {
+    overlay.remove();
+  }
+}

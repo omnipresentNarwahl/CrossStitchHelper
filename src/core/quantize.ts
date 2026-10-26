@@ -13,7 +13,7 @@ interface Cluster {
  * again and remembers the order, so `cut` can give back any number of colours instantly
  * (that's what the "number of colours" slider drives).
  */
-export class ColorTree {
+class Agglomerative {
   /** Distinct input colours. */
   readonly colors: RGB[];
   readonly weights: number[];
@@ -122,6 +122,52 @@ export class ColorTree {
       sizes.push(w);
     });
     return { assign, palette, sizes };
+  }
+}
+
+/**
+ * Same interface as before, but first folds near-identical colours together (within a few units
+ * of Lab) so charts with hundreds of slightly different shades stay fast.
+ */
+export class ColorTree {
+  private readonly inner: Agglomerative;
+  private readonly leaderOf: number[];
+
+  constructor(colors: RGB[], weights: number[]) {
+    const order = colors.map((_, i) => i).sort((a, b) => weights[b] - weights[a]);
+    const leaders: { lab: Lab; rgbSum: number[]; w: number }[] = [];
+    this.leaderOf = new Array(colors.length).fill(0);
+    for (const i of order) {
+      const lab = rgbToLab(colors[i]);
+      let found = -1;
+      for (let k = 0; k < leaders.length; k++) {
+        if (labDist(lab, leaders[k].lab) < 4) {
+          found = k;
+          break;
+        }
+      }
+      if (found < 0) {
+        found = leaders.length;
+        leaders.push({ lab, rgbSum: [0, 0, 0], w: 0 });
+      }
+      const l = leaders[found];
+      for (let c = 0; c < 3; c++) l.rgbSum[c] += colors[i][c] * weights[i];
+      l.w += weights[i];
+      this.leaderOf[i] = found;
+    }
+    this.inner = new Agglomerative(
+      leaders.map((l) => l.rgbSum.map((v) => Math.round(v / l.w)) as RGB),
+      leaders.map((l) => l.w),
+    );
+  }
+
+  countForDistance(minDist: number): number {
+    return this.inner.countForDistance(minDist);
+  }
+
+  cut(count: number, minSize = 0): { assign: number[]; palette: RGB[]; sizes: number[] } {
+    const r = this.inner.cut(count, minSize);
+    return { ...r, assign: this.leaderOf.map((k) => r.assign[k]) };
   }
 }
 

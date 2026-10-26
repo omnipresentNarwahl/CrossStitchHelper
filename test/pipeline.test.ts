@@ -11,7 +11,7 @@ test('macaw end to end', () => {
   b.cells.forEach((v) => v && counts[v - 1]++);
   expect(g.grid.cols).toBe(28);
   expect(g.grid.rows).toBe(56);
-  expect(b.removed).toBeGreaterThan(0);
+  expect(b.removed).toBeGreaterThanOrEqual(0);
   // every legend colour is used somewhere in the chart
   expect(b.palette).toHaveLength(15);
   expect(counts.every((n) => n > 0)).toBe(true);

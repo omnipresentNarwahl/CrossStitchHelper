@@ -30,6 +30,11 @@ Merge to `main`, then in the repo go to **Settings → Pages → Source: GitHub 
 
 - `src/core/detect.ts` finds the grid spacing and offset from the faint repeating lines (Fourier scan of the line profile).
 - If the grid isn't found (or is wrong), the first import step lets you drag the two corners around the chart and press **Find grid here**, which re-runs detection on just that area. **Mark one square** (draw a box around a single square) and the Columns/Rows counts are used as size hints. Charts with no grid lines at all are handled by looking at the edges between coloured squares.
+- Whole-page charts (several designs, several legends, symbols instead of colours) are handled by:
+  - `src/core/shading.ts`: a translucent dark band across the top of a screenshot (a PDF viewer toolbar shadow) is detected and brightened away before analysis.
+  - `src/core/lines.ts` / `gridmask.ts`: every grid line is located exactly (the heavy every-tenth lines are kept out of the squares), and cells without grid lines (legend boxes, captions, margins) are ignored.
+  - `src/core/legend.ts`: finds every legend swatch, including stacks of touching ones, across several legends, reading colour and symbol shape.
+  - `src/core/appearance.ts`: a stitch is its fill colour *and* its symbol; the symbol is reduced to a few shape numbers that survive small shifts. Colours the legend scan missed are added when a real share of the chart goes unexplained; without a legend, stitches are clustered by appearance.
 - `src/core/sample.ts` takes the dominant colour of each square, ignoring dark symbols and backstitch lines; a dark mark in the middle of a white square is treated as a white stitch.
 - `src/core/quantize.ts` clusters colours (agglomerative, in Lab space) so the "number of colours" slider is instant.
 - `src/core/legend.ts` finds the legend: same-sized swatches lined up in a column or row, reading each swatch's colour.

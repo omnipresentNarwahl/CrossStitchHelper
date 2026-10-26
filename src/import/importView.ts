@@ -1,5 +1,6 @@
 import { detectLatticeIn, snapRegionToLattice, type Region } from '../core/detect';
 import { findLegend } from '../core/legend';
+import { correctShading } from '../core/shading';
 import { autoGrid, ImportModel, type BuiltPattern, type Cleanup } from '../core/model';
 import type { Raster } from '../core/raster';
 import type { GridSpec } from '../core/sample';
@@ -7,7 +8,7 @@ import { savePattern } from '../db';
 import { draw } from '../stitch/draw';
 import type { Pattern } from '../types';
 import { chipCanvas } from '../ui/chips';
-import { confirmDialog, h, toast, type View } from '../ui/dom';
+import { confirmDialog, h, toast, withBusy, type View } from '../ui/dom';
 import { createEditView } from '../stitch/editView';
 import { Viewport, type DragHandler, type Rect } from '../ui/viewport';
 
@@ -48,9 +49,10 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
     onCancel();
     return { el: h('div'), destroy() { /* nothing */ } };
   }
-  const { raster } = loaded;
+  // Analysis works on a copy with any screenshot shadow band brightened away; the picture shown to the user is untouched.
+  const raster = correctShading(loaded.raster);
 
-  const auto = autoGrid(raster);
+  const auto = await withBusy('Looking for the grid…', () => autoGrid(raster));
   let legend = auto?.legend ?? null;
   /** Where grid lines are believed to be; lets the corner handles snap to them. */
   let lattice: { x0: number; y0: number; cw: number; ch: number } | null = auto && auto.confidence > 0.2 ? auto.grid : null;
@@ -98,13 +100,13 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
     let markMode = false;
 
     /** Re-runs grid detection on the area between the corners, using any hints the user gave. */
-    function findGrid(): void {
+    async function findGrid(): Promise<void> {
       const tl = corner('tl'), br = corner('br');
       const region: Region = { x0: tl.x, y0: tl.y, x1: br.x, y1: br.y };
       let hint: { w: number; h: number } | undefined;
       if (cellBox) hint = { w: Math.abs(cellBox.x1 - cellBox.x0), h: Math.abs(cellBox.y1 - cellBox.y0) };
       else if (sizeTouched) hint = { w: (region.x1 - region.x0) / grid.cols, h: (region.y1 - region.y0) / grid.rows };
-      const lat = detectLatticeIn(raster, region, { cellHint: hint });
+      const lat = await withBusy('Looking for the grid…', () => detectLatticeIn(raster, region, { cellHint: hint }));
       const snapped = lat ? snapRegionToLattice(lat, region) : null;
       if (!lat || !snapped || lat.confidence < 0.1) {
         detectNote = {
@@ -114,7 +116,7 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
       } else {
         lattice = { x0: lat.ox, y0: lat.oy, cw: lat.cw, ch: lat.ch };
         grid = { x0: snapped.x0, y0: snapped.y0, cw: lat.cw, ch: lat.ch, cols: snapped.cols, rows: snapped.rows };
-        legend = findLegend(raster, lat.cw)?.map((sw) => sw.rgb) ?? legend;
+        legend = (await withBusy('Reading the legend…', () => findLegend(raster, lat.cw, lat.ch))) ?? legend;
         detectNote = {
           text: `Found a grid of ${snapped.cols} × ${snapped.rows} squares${lat.confidence < 0.3 ? ' (a weak match, so please check the pink lines sit on the chart’s lines)' : ''}. Adjust the corners if it’s not quite right.`,
           kind: lat.confidence < 0.3 ? 'warn' : 'good',
@@ -314,7 +316,7 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
         note,
         h('p', { class: 'muted', text: 'Drag pink corners 1 and 2 to the outer edges of the stitched area (a legend inside is fine). Pinch to zoom.' }),
         h('div', { class: 'row wrap' },
-          h('button', { class: `btn small ${autoFailed ? 'primary' : ''}`, text: '🔍 Find grid here', on: { click: findGrid } }),
+          h('button', { class: `btn small ${autoFailed ? 'primary' : ''}`, text: '🔍 Find grid here', on: { click: () => void findGrid() } }),
           markBtn,
         ),
         h('div', { class: 'row space' }, info, h('button', { class: 'btn small', text: 'Reset', on: { click: () => { grid = { ...initialGrid }; cellBox = null; sizeTouched = false; updateInfo(); redraw(); } } })),
@@ -375,22 +377,22 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
     };
   }
 
-  function startReview(): boolean {
-    const model = new ImportModel(raster, grid, legend);
+  async function startReview(): Promise<boolean> {
+    const model = await withBusy('Reading the chart…', () => new ImportModel(raster, grid, legend));
     if (!model.maxColors) {
       toast('No stitches found in that area. Try adjusting the corners.');
       return false;
     }
     const useLegend = !!model.legend;
     const cleanup = model.suggestedCleanup;
-    const built = model.build(model.suggestedColors, cleanup, useLegend);
+    const built = await withBusy('Building the pattern…', () => model.build(model.suggestedColors, cleanup, useLegend));
     const name = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() || 'My pattern';
     review = { model, colorCount: model.suggestedColors, useLegend, cleanup, built, pat: makePattern(built, name), edited: false, name };
     return true;
   }
 
-  function showReviewStep(): void {
-    if (!review && !startReview()) return;
+  async function showReviewStep(): Promise<void> {
+    if (!review && !(await startReview())) return;
     const r = review!;
     let showOriginal = false;
 
@@ -433,7 +435,7 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
         return;
       }
       apply();
-      r.built = r.model.build(r.colorCount, r.cleanup, r.useLegend);
+      r.built = await withBusy('Rebuilding…', () => r.model.build(r.colorCount, r.cleanup, r.useLegend));
       r.pat = makePattern(r.built, r.name);
       r.edited = false;
       refresh();
@@ -451,7 +453,8 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
       summary.textContent = `${r.pat.cols} × ${r.pat.rows} squares · ${stitches} stitches · ${r.pat.palette.length} colours${r.built.removed && !r.edited ? ` · ${r.built.removed} stray squares ignored` : ''}`;
       if (r.useLegend) {
         colourNote.className = 'note good';
-        colourNote.textContent = `✓ Matched to the ${r.model.legend!.length} colours found in the chart's legend. Change the number to group colours automatically instead.`;
+        const found = r.model.legendCount, extra = r.model.legend!.length - found;
+        colourNote.textContent = `✓ Matched to the ${found} colours found in the chart's legend${extra ? `, plus ${extra} more the chart uses that the legend scan missed` : ''}. Change the number to group colours automatically instead.`;
         legendBtn.style.display = 'none';
       } else {
         colourNote.className = 'note';
