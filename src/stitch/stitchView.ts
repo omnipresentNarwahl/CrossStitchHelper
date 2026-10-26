@@ -53,6 +53,7 @@ export async function createStitchView(pattern: Pattern, goHome: () => void, onE
       raf = 0;
       state.showOriginal = showOriginal;
       state.highlight = highlight;
+      state.focus = session.last >= 0 && pattern.done[session.last] === 1 ? session.last : -1;
       draw(ctx, vp, state);
     });
   };
@@ -137,7 +138,15 @@ export async function createStitchView(pattern: Pattern, goHome: () => void, onE
   const fitBtn = h('button', { class: 'fab', text: '⤢', attrs: { 'aria-label': 'Fit to screen' }, on: { click: () => fitView() } });
   const zoomIn = h('button', { class: 'fab', text: '+', attrs: { 'aria-label': 'Zoom in' }, on: { click: () => vp.zoomAt(vp.width / 2, vp.height / 2, 1.6) } });
   const zoomOut = h('button', { class: 'fab', text: '−', attrs: { 'aria-label': 'Zoom out' }, on: { click: () => vp.zoomAt(vp.width / 2, vp.height / 2, 1 / 1.6) } });
-  const fabs = h('div', { class: 'fabs' }, zoomIn, zoomOut, fitBtn, undoBtn, redoBtn);
+  const lastBtn = h('button', { class: 'fab', text: '◎', attrs: { 'aria-label': 'Jump to last stitch' }, on: { click: () => jumpToLast() } });
+  const fabs = h('div', { class: 'fabs' }, zoomIn, zoomOut, fitBtn, lastBtn, undoBtn, redoBtn);
+
+  function jumpToLast(): void {
+    if (session.last < 0 || !pattern.done[session.last]) return toast('Nothing crossed off yet');
+    vp.centerOn((session.last % pattern.cols) + 0.5, ((session.last / pattern.cols) | 0) + 0.5, Math.max(vp.scale, 28));
+    redraw();
+    saveView();
+  }
 
   function fitView(): void {
     vp.fit({ x0: 0, y0: 0, x1: pattern.cols, y1: pattern.rows });
@@ -204,6 +213,7 @@ export async function createStitchView(pattern: Pattern, goHome: () => void, onE
     progressBar.style.width = `${session.totalAll ? (done / session.totalAll) * 100 : 0}%`;
     undoBtn.toggleAttribute('disabled', !session.canUndo);
     redoBtn.toggleAttribute('disabled', !session.canRedo);
+    lastBtn.toggleAttribute('disabled', session.last < 0 || !pattern.done[session.last]);
     updateTray();
     redraw();
   }

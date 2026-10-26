@@ -36,6 +36,8 @@ export interface Pattern {
   imageH: number;
   imageGrid: ImageGrid;
   view?: ViewState;
+  /** Cell index of the stitch most recently crossed off, so you can see where you left off. */
+  lastStitch?: number;
   created: number;
   updated: number;
 }

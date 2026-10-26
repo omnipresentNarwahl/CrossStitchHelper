@@ -12,7 +12,7 @@ export interface RenderState {
   highlight: number;
   /** Draw every cell in full colour regardless of progress (used while importing). */
   preview?: boolean;
-  /** Cell index to ring (the square being edited), or -1. */
+  /** Cell index to ring (the square being edited, or the last stitch crossed off), or -1. */
   focus?: number;
   /** Draw the pattern's grid lines on top of the original image. */
   gridOverlay?: boolean;
@@ -151,7 +151,7 @@ function drawPatternCells(ctx: CanvasRenderingContext2D, s: RenderState, c0: num
         drawSymbol(ctx, k, c + 0.5, r + 0.5, 0.24);
         if (done) {
           const faint = hl >= 0;
-          drawSlash(ctx, c + 0.5, r + 0.5, faint ? 'rgba(0,0,0,0.4)' : f.ink, faint ? 'rgba(255,255,255,0.4)' : f.ink === '#fff' ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.7)');
+          drawSlash(ctx, c + 0.5, r + 0.5, faint ? 'rgba(0,0,0,0.45)' : '#000', faint ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.8)');
         }
       }
     }
@@ -175,7 +175,7 @@ function drawOriginalOverlay(ctx: CanvasRenderingContext2D, s: RenderState, c0: 
       if (!s.preview && p.done[i] === 1) {
         ctx.fillStyle = 'rgba(30,170,90,0.45)';
         ctx.fillRect(c, r, 1, 1);
-        if (px >= 13) drawSlash(ctx, c + 0.5, r + 0.5, '#fff', 'rgba(0,0,0,0.55)');
+        if (px >= 13) drawSlash(ctx, c + 0.5, r + 0.5, '#000', 'rgba(255,255,255,0.8)');
       } else if (hl >= 0 && p.cells[i] - 1 === hl) {
         ctx.strokeStyle = HILITE;
         ctx.lineWidth = Math.min(0.14, 2.5 / px);

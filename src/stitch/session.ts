@@ -23,11 +23,15 @@ export class Session {
   total: number[] = [];
   leftAll = 0;
   totalAll = 0;
+  /** The stitch most recently crossed off, or -1. */
+  last = -1;
+  private baseLast = -1;
   /** Bumps whenever the pattern is edited, so callers can tell whether anything changed. */
   revision = 0;
   onChange: () => void = () => undefined;
 
   constructor(readonly pattern: Pattern, private readonly persist = true) {
+    this.baseLast = this.last = pattern.lastStitch ?? -1;
     this.recount();
   }
 
@@ -73,6 +77,7 @@ export class Session {
     this.apply(op.idx, op.cell0, op.done0);
     this.redoStack.push(op);
     this.revision++;
+    this.setLast(this.lastFromHistory());
     this.changed();
   }
 
@@ -82,6 +87,7 @@ export class Session {
     this.apply(op.idx, op.cell1, op.done1);
     this.undoStack.push(op);
     this.revision++;
+    this.setLast(this.lastFromHistory());
     this.changed();
   }
 
@@ -112,6 +118,22 @@ export class Session {
     this.recount();
     this.scheduleSave();
     this.onChange();
+  }
+
+  /** The last stitch marked done by any step still in the undo history (or where we started). */
+  private lastFromHistory(): number {
+    for (let s = this.undoStack.length - 1; s >= 0; s--) {
+      const op = this.undoStack[s];
+      for (let k = op.idx.length - 1; k >= 0; k--) if (op.done1[k] === 1 && op.done0[k] === 0) return op.idx[k];
+    }
+    return this.baseLast;
+  }
+
+  /** @internal */
+  setLast(i: number): void {
+    this.last = i;
+    this.pattern.lastStitch = i;
+    this.scheduleSave();
   }
 
   /** Folds colour `from` into colour `to` (palette indices) and removes `from`. Clears undo history. */
@@ -158,8 +180,11 @@ export class Session {
 export class Stroke {
   private readonly op: Op = { idx: [], cell0: [], done0: [], cell1: [], done1: [] };
   private readonly seen = new Set<number>();
+  private readonly prevLast: number;
 
-  constructor(private readonly s: Session) {}
+  constructor(private readonly s: Session) {
+    this.prevLast = s.last;
+  }
 
   private touch(i: number): boolean {
     if (this.seen.has(i)) return false;
@@ -183,6 +208,7 @@ export class Stroke {
     if (!p.cells[i] || p.done[i] === value || this.seen.has(i)) return;
     this.touch(i);
     p.done[i] = value;
+    if (value === 1) this.s.setLast(i);
     this.finish(i);
     this.s.recount();
     this.s.onChange();
@@ -207,6 +233,7 @@ export class Stroke {
   /** Throws the stroke away, restoring every cell it touched. */
   cancel(): void {
     this.s.apply(this.op.idx, this.op.cell0, this.op.done0);
+    this.s.setLast(this.prevLast);
     this.s.onChange();
   }
 }
