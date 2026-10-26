@@ -40,7 +40,7 @@ function fillsFor(p: Pattern): Fills[] {
   const fills = p.palette.map((e) => ({
     full: rgbCss(e.rgb),
     ghost: rgbCss(mix(e.rgb, WHITE, 0.62)),
-    faded: rgbCss(mix(mix(e.rgb, [200, 200, 200], 0.5), WHITE, 0.8)),
+    faded: rgbCss(mix(mix(e.rgb, [170, 170, 170], 0.55), WHITE, 0.5)),
     ink: contrastInk(e.rgb),
     inkGhost: rgbCss(mix(e.rgb, [0, 0, 0], 0.45)),
   }));
@@ -69,14 +69,18 @@ export function drawSymbol(ctx: CanvasRenderingContext2D, index: number, cx: num
   }
 }
 
-function drawCheck(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
-  ctx.beginPath();
-  ctx.moveTo(cx - r * 0.8, cy);
-  ctx.lineTo(cx - r * 0.2, cy + r * 0.65);
-  ctx.lineTo(cx + r * 0.85, cy - r * 0.6);
-  ctx.lineWidth = r * 0.4;
+/** A diagonal strike-through, drawn over a cell's symbol so finished stitches keep their identity. */
+function drawSlash(ctx: CanvasRenderingContext2D, cx: number, cy: number, core: string, halo: string): void {
+  const half = 0.34;
   ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(cx - half, cy + half);
+  ctx.lineTo(cx + half, cy - half);
+  ctx.strokeStyle = halo;
+  ctx.lineWidth = 0.17;
+  ctx.stroke();
+  ctx.strokeStyle = core;
+  ctx.lineWidth = 0.09;
   ctx.stroke();
 }
 
@@ -141,13 +145,13 @@ function drawPatternCells(ctx: CanvasRenderingContext2D, s: RenderState, c0: num
       if (hl >= 0 && k === hl && !done) outlined.push(i);
 
       if (showMarks) {
+        const bright = hl < 0 || (k === hl && !done);
+        ctx.fillStyle = s.preview ? f.ink : hl >= 0 ? (bright ? f.ink : 'rgba(0,0,0,0.32)') : done ? f.ink : f.inkGhost;
+        ctx.strokeStyle = ctx.fillStyle;
+        drawSymbol(ctx, k, c + 0.5, r + 0.5, 0.24);
         if (done) {
-          ctx.strokeStyle = hl >= 0 ? 'rgba(0,0,0,0.25)' : f.ink;
-          drawCheck(ctx, c + 0.5, r + 0.5, 0.26);
-        } else if (hl < 0 || k === hl) {
-          ctx.fillStyle = s.preview ? f.ink : hl >= 0 ? f.ink : f.inkGhost;
-          ctx.strokeStyle = ctx.fillStyle;
-          drawSymbol(ctx, k, c + 0.5, r + 0.5, 0.24);
+          const faint = hl >= 0;
+          drawSlash(ctx, c + 0.5, r + 0.5, faint ? 'rgba(0,0,0,0.4)' : f.ink, faint ? 'rgba(255,255,255,0.4)' : f.ink === '#fff' ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.7)');
         }
       }
     }
@@ -163,7 +167,7 @@ function drawPatternCells(ctx: CanvasRenderingContext2D, s: RenderState, c0: num
 function drawOriginalOverlay(ctx: CanvasRenderingContext2D, s: RenderState, c0: number, c1: number, r0: number, r1: number, px: number): void {
   const p = s.pattern;
   const hl = s.highlight;
-  // Stitched cells get a green wash (and a tick when large) so progress is still visible on the scan.
+  // Stitched cells get a green wash (and a strike-through when large) so progress is still visible on the scan.
   for (let r = r0; r < r1; r++) {
     for (let c = c0; c < c1; c++) {
       const i = r * p.cols + c;
@@ -171,10 +175,7 @@ function drawOriginalOverlay(ctx: CanvasRenderingContext2D, s: RenderState, c0: 
       if (!s.preview && p.done[i] === 1) {
         ctx.fillStyle = 'rgba(30,170,90,0.45)';
         ctx.fillRect(c, r, 1, 1);
-        if (px >= 13) {
-          ctx.strokeStyle = '#fff';
-          drawCheck(ctx, c + 0.5, r + 0.5, 0.26);
-        }
+        if (px >= 13) drawSlash(ctx, c + 0.5, r + 0.5, '#fff', 'rgba(0,0,0,0.55)');
       } else if (hl >= 0 && p.cells[i] - 1 === hl) {
         ctx.strokeStyle = HILITE;
         ctx.lineWidth = Math.min(0.14, 2.5 / px);

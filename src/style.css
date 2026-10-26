@@ -137,3 +137,20 @@ p { margin: 0 0 0.5em; }
 .note.good { color: #1b7f46; font-weight: 600; }
 .tool-btn.wide { flex: 1 !important; }
 .tool-btn.compact { flex: none; white-space: nowrap; padding: 4px 12px; }
+
+/* Primary actions pinned to the bottom so they are never scrolled out of sight */
+.action-bar { display: flex; gap: 8px; padding: 10px 14px calc(10px + var(--safe-b)); background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -4px 12px rgba(0,0,0,0.08); position: relative; z-index: 2; }
+.action-bar .btn { white-space: nowrap; }
+.btn.grow { flex: 1; }
+.bottom.panel.scroll-panel { border-top: 0; max-height: 42%; padding-bottom: 12px; }
+.scroll-panel {
+  background:
+    linear-gradient(#fff 30%, rgba(255,255,255,0)) top,
+    linear-gradient(rgba(255,255,255,0), #fff 70%) bottom,
+    radial-gradient(farthest-side at 50% 0, rgba(0,0,0,0.28), rgba(0,0,0,0)) top,
+    radial-gradient(farthest-side at 50% 100%, rgba(0,0,0,0.28), rgba(0,0,0,0)) bottom;
+  background-repeat: no-repeat;
+  background-color: #fff;
+  background-size: 100% 36px, 100% 36px, 100% 12px, 100% 12px;
+  background-attachment: local, local, scroll, scroll;
+}

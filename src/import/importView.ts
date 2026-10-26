@@ -229,6 +229,9 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
         h('div', { class: 'row space' }, info, h('button', { class: 'btn small', text: 'Reset', on: { click: () => { grid = { ...initialGrid }; updateInfo(); redraw(); } } })),
         h('div', { class: 'row space' }, colsStepper, rowsStepper),
       ),
+      h('div', { class: 'action-bar' },
+        h('button', { class: 'btn primary big grow', text: 'Next: check colours →', on: { click: () => { review = null; showReviewStep(); } } }),
+      ),
     );
     show(el, () => {
       vp.destroy();
@@ -385,8 +388,8 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
     });
 
     const create = h('button', {
-      class: 'btn primary big',
-      text: 'Start stitching',
+      class: 'btn primary big grow',
+      text: 'Start stitching →',
       on: {
         click: async () => {
           create.setAttribute('disabled', '');
@@ -400,7 +403,7 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
 
     const fix = h('button', {
       class: 'btn',
-      text: '✎ Fix squares by hand (compare side by side)',
+      text: '✎ Fix squares',
       on: {
         click: () => {
           const ed = createEditView(r.pat, {
@@ -441,9 +444,8 @@ export async function createImportView(file: File, onCreated: (id: string) => vo
         ),
         h('div', { class: 'field' }, h('span', { text: 'Stray bits (legend, labels)' }), h('div', { class: 'segmented wide' }, ...cleanupBtns.map((c) => c.b))),
         h('p', { class: 'muted', text: 'Use “Original” above to compare with your image.' }),
-        fix,
-        create,
       ),
+      h('div', { class: 'action-bar' }, fix, create),
     );
     show(el, () => {
       vp.destroy();
